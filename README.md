@@ -2,6 +2,9 @@
 
 Real-time monitoring dashboard for Claude Code sessions. Automatically monitors all Claude Code sessions on the local machine with a beautiful web interface.
 
+<img width="1245" height="620" alt="image" src="https://github.com/user-attachments/assets/bbe28764-0a62-4409-b302-bec04bfd550a" />
+
+
 ## Features
 
 ### Core Monitoring
