@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code Activity Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+    .toast-in { animation: slideIn 0.3s ease-out; }
+    .toast-out { animation: slideOut 0.3s ease-in forwards; }
+    .custom-scroll::-webkit-scrollbar { width: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: #1f2937; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+    .session-card { transition: all 0.2s ease; }
+    .session-card.collapsed .session-details { display: none; }
+    .session-card .expand-icon { transition: transform 0.2s ease; }
+    .session-card.collapsed .expand-icon { transform: rotate(-90deg); }
+    .tool-bar { width: 4px; min-width: 4px; }
+    .timeline-item { position: relative; padding-left: 20px; }
+    .timeline-item::before { content: ''; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px; background: #374151; }
+    .timeline-item::after { content: ''; position: absolute; left: 2px; top: 8px; width: 10px; height: 10px; border-radius: 50%; background: #4b5563; }
+    .timeline-item.completed::after { background: #10b981; }
+    .timeline-item.failed::after { background: #ef4444; }
+    .timeline-item:last-child::before { display: none; }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+  <div class="container mx-auto px-4 py-4 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-4">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center space-x-3">
+          <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+          </svg>
+          <h1 class="text-xl font-bold">Claude Code Monitor</h1>
+        </div>
+        <div class="flex items-center space-x-3">
+          <div id="connection-status" class="flex items-center space-x-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-gray-500"></div>
+            <span class="text-xs text-gray-400">Connecting...</span>
+          </div>
+          <button onclick="toggleSound()" id="sound-btn" class="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200" title="Toggle sound">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Active</div>
+        <div id="stat-active" class="text-lg font-bold text-green-400">0</div>
+      </div>
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Idle</div>
+        <div id="stat-idle" class="text-lg font-bold text-yellow-400">0</div>
+      </div>
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Sub-Agents</div>
+        <div id="stat-subagents" class="text-lg font-bold text-purple-400">0</div>
+      </div>
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Tokens</div>
+        <div id="stat-tokens" class="text-lg font-bold text-blue-400">0</div>
+      </div>
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Cost</div>
+        <div id="stat-cost" class="text-lg font-bold text-yellow-400">$0.00</div>
+      </div>
+      <div class="bg-gray-800 rounded-lg p-2 border border-gray-700 text-center">
+        <div class="text-xs text-gray-500">Total</div>
+        <div id="stat-total" class="text-lg font-bold text-gray-400">0</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="bg-gray-800 rounded-lg p-3 mb-4 border border-gray-700">
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Search -->
+        <div class="flex-1 min-w-[200px]">
+          <input type="text" id="search-input" placeholder="Search sessions..."
+                 class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                 oninput="filterSessions()">
+        </div>
+
+        <!-- Filter Buttons -->
+        <div class="flex items-center space-x-1">
+          <button onclick="setFilter('all')" data-filter="all" class="filter-btn px-3 py-1.5 text-xs rounded bg-blue-600 text-white">All</button>
+          <button onclick="setFilter('active')" data-filter="active" class="filter-btn px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Active</button>
+          <button onclick="setFilter('idle')" data-filter="idle" class="filter-btn px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Idle</button>
+          <button onclick="setFilter('completed')" data-filter="completed" class="filter-btn px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Done</button>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center space-x-1 border-l border-gray-600 pl-2">
+          <button onclick="toggleAllSessions()" id="collapse-btn" class="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600" title="Collapse/Expand All">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+            </svg>
+          </button>
+          <button onclick="toggleAutoScroll()" id="autoscroll-btn" class="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600" title="Auto-scroll to active">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+            </svg>
+          </button>
+          <button onclick="toggleStats()" id="stats-btn" class="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600" title="Toggle Statistics">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+          </button>
+          <button onclick="clearAllSessions()" class="px-3 py-1.5 text-xs rounded bg-red-900/50 text-red-300 hover:bg-red-800/50" title="Clear All">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Statistics Panel (Hidden by default) -->
+    <div id="stats-panel" class="hidden bg-gray-800 rounded-lg p-4 mb-4 border border-gray-700">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-gray-300">Statistics</h3>
+        <button onclick="toggleStats()" class="text-gray-500 hover:text-gray-300">&times;</button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Tool Usage -->
+        <div>
+          <div class="text-xs text-gray-500 mb-2">Tool Usage</div>
+          <div id="tool-stats" class="space-y-1"></div>
+        </div>
+        <!-- Token Breakdown -->
+        <div>
+          <div class="text-xs text-gray-500 mb-2">Token Breakdown</div>
+          <div id="token-breakdown" class="space-y-1"></div>
+        </div>
+        <!-- Model Usage -->
+        <div>
+          <div class="text-xs text-gray-500 mb-2">Model Usage</div>
+          <div id="model-stats" class="space-y-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions Container -->
+    <div id="sessions-container" class="space-y-3"></div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="text-center py-12">
+      <svg class="w-12 h-12 mx-auto text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+      </svg>
+      <p class="text-gray-400">No active Claude sessions</p>
+      <p class="text-gray-500 text-sm mt-1">Waiting for Claude Code to start...</p>
+    </div>
+  </div>
+
+  <!-- Session Detail Modal -->
+  <div id="detail-modal" class="fixed inset-0 bg-black/70 z-40 hidden flex items-center justify-center p-4" onclick="closeModal(event)">
+    <div class="bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden border border-gray-600" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between p-4 border-b border-gray-700">
+        <h2 id="modal-title" class="text-lg font-medium">Session Details</h2>
+        <button onclick="closeDetailModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+      </div>
+      <div id="modal-content" class="p-4 overflow-y-auto max-h-[calc(90vh-120px)] custom-scroll"></div>
+      <div class="flex items-center justify-end p-4 border-t border-gray-700 space-x-2">
+        <button onclick="exportSession()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Export JSON</button>
+        <button onclick="closeDetailModal()" class="px-4 py-2 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let ws = null;
+    let reconnectAttempts = 0;
+    const maxReconnectDelay = 30000;
+    const sessions = new Map();
+    let currentFilter = 'all';
+    let searchQuery = '';
+    let allCollapsed = false;
+    let autoScrollEnabled = false;
+    let soundEnabled = true;
+    let selectedSessionId = null;
+    const expandedSessions = new Set();
+
+    // Audio for notifications
+    const notificationSound = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp6djol7bWBdYm97ipudoJuPgHFkW1xkeYyeoqGcj39wYVlaX3KGl6SloZePfm5fWFhdboOUpaSjmY9/b19XWF1sg5OjoqKZj39vYFhYXWyDk6OiopmPf29gWFlcbIOTo6KimY9/b2BYWFxsg5OjoqKZj39vYFhYXGyDk6KhopmPgG9gWFhcbIOToqGZkH9wYFhYXGyEk6KhmZB/cGBYV1xsg5SioZmQgHBgV1dcbYSUoqGZkIBwYFdXXG2ElKOimZGAcGBXV1xtg5SjopmQgHBgV1dcbYSUo6KZkYBwYA==');
+
+    // Connect to WebSocket
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        updateConnectionStatus(true);
+        showToast('Connected to monitor', 'success');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          handleMessage(JSON.parse(event.data));
+        } catch (e) {
+          console.error('Parse error:', e);
+        }
+      };
+
+      ws.onclose = () => {
+        updateConnectionStatus(false);
+        reconnect();
+      };
+
+      ws.onerror = () => updateConnectionStatus(false);
+    }
+
+    function reconnect() {
+      reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
+      setTimeout(connect, delay);
+    }
+
+    function updateConnectionStatus(connected) {
+      const el = document.getElementById('connection-status');
+      const dot = el.querySelector('div');
+      const text = el.querySelector('span');
+      dot.className = `w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 pulse-dot' : 'bg-red-500'}`;
+      text.textContent = connected ? 'Connected' : 'Disconnected';
+      text.className = `text-xs ${connected ? 'text-green-400' : 'text-red-400'}`;
+    }
+
+    function handleMessage(data) {
+      const prevStatus = data.session ? sessions.get(data.session.id)?.status : null;
+
+      switch (data.type) {
+        case 'initial_state':
+          data.sessions.forEach(s => sessions.set(s.id, s));
+          renderSessions();
+          break;
+        case 'session_update':
+          sessions.set(data.session.id, data.session);
+          // Check for status changes for notifications
+          if (prevStatus && prevStatus !== data.session.status) {
+            if (data.session.status === 'completed') {
+              showToast(`Session ${data.session.id.slice(0,8)} completed`, 'success');
+              playSound();
+            } else if (data.session.status === 'error') {
+              showToast(`Session ${data.session.id.slice(0,8)} error!`, 'error');
+              playSound();
+            }
+          }
+          renderSessions();
+          break;
+        case 'session_completed':
+          if (sessions.has(data.session.id)) {
+            sessions.set(data.session.id, data.session);
+            showToast(`Session completed`, 'success');
+            playSound();
+          }
+          renderSessions();
+          break;
+        case 'session_removed':
+          sessions.delete(data.sessionId);
+          renderSessions();
+          break;
+      }
+    }
+
+    // Toast notifications
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600', warning: 'bg-yellow-600' };
+      toast.className = `${colors[type] || colors.info} text-white px-4 py-2 rounded-lg shadow-lg text-sm toast-in`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.classList.remove('toast-in');
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    function playSound() {
+      if (soundEnabled) {
+        notificationSound.play().catch(() => {});
+      }
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('sound-btn');
+      btn.classList.toggle('text-blue-400', soundEnabled);
+      showToast(`Sound ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
+    }
+
+    // Filtering
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('bg-blue-600', btn.dataset.filter === filter);
+        btn.classList.toggle('text-white', btn.dataset.filter === filter);
+        btn.classList.toggle('bg-gray-700', btn.dataset.filter !== filter);
+        btn.classList.toggle('text-gray-300', btn.dataset.filter !== filter);
+      });
+      renderSessions();
+    }
+
+    function filterSessions() {
+      searchQuery = document.getElementById('search-input').value.toLowerCase();
+      renderSessions();
+    }
+
+    function getFilteredSessions() {
+      let filtered = Array.from(sessions.values()).filter(s => !s.isSubAgent);
+
+      if (currentFilter !== 'all') {
+        filtered = filtered.filter(s => s.status === currentFilter);
+      }
+
+      if (searchQuery) {
+        filtered = filtered.filter(s =>
+          s.id.toLowerCase().includes(searchQuery) ||
+          (s.prompt || '').toLowerCase().includes(searchQuery) ||
+          (s.cwd || '').toLowerCase().includes(searchQuery)
+        );
+      }
+
+      return filtered.sort((a, b) => {
+        if (a.status === 'active' && b.status !== 'active') return -1;
+        if (b.status === 'active' && a.status !== 'active') return 1;
+        return b.lastActivity - a.lastActivity;
+      });
+    }
+
+    // Toggle functions
+    function toggleAllSessions() {
+      allCollapsed = !allCollapsed;
+      if (allCollapsed) {
+        expandedSessions.clear();
+      } else {
+        sessions.forEach((_, id) => expandedSessions.add(id));
+      }
+      renderSessions();
+    }
+
+    function toggleSession(sessionId) {
+      if (expandedSessions.has(sessionId)) {
+        expandedSessions.delete(sessionId);
+      } else {
+        expandedSessions.add(sessionId);
+      }
+      renderSessions();
+    }
+
+    function toggleAutoScroll() {
+      autoScrollEnabled = !autoScrollEnabled;
+      const btn = document.getElementById('autoscroll-btn');
+      btn.classList.toggle('bg-blue-600', autoScrollEnabled);
+      btn.classList.toggle('text-white', autoScrollEnabled);
+      showToast(`Auto-scroll ${autoScrollEnabled ? 'enabled' : 'disabled'}`, 'info');
+    }
+
+    function toggleStats() {
+      const panel = document.getElementById('stats-panel');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        updateStatistics();
+      }
+    }
+
+    function clearAllSessions() {
+      if (confirm('Clear all sessions from display? (This only clears the UI, not actual data)')) {
+        sessions.clear();
+        renderSessions();
+        showToast('Display cleared', 'info');
+      }
+    }
+
+    // Render sessions
+    function renderSessions() {
+      const container = document.getElementById('sessions-container');
+      const emptyState = document.getElementById('empty-state');
+      const filtered = getFilteredSessions();
+
+      if (filtered.length === 0) {
+        container.innerHTML = '';
+        emptyState.style.display = sessions.size === 0 ? 'block' : 'none';
+        if (sessions.size > 0 && filtered.length === 0) {
+          container.innerHTML = '<div class="text-center py-8 text-gray-500">No sessions match the current filter</div>';
+        }
+        updateStats();
+        return;
+      }
+
+      emptyState.style.display = 'none';
+      container.innerHTML = filtered.map(s => renderSessionCard(s, false)).join('');
+      updateStats();
+      updateElapsedTimes();
+
+      if (autoScrollEnabled) {
+        const activeCard = container.querySelector('[data-status="active"]');
+        if (activeCard) activeCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function renderSessionCard(session, isSubAgent = false) {
+      const isExpanded = expandedSessions.has(session.id);
+      const statusColor = getStatusColor(session.status);
+      const elapsed = formatElapsed(Date.now() - session.startTime);
+      const shortId = (session.agentId || session.id).substring(0, 8);
+      const childAgents = (session.subAgents || []).map(id => sessions.get(id)).filter(Boolean);
+      const projectName = session.cwd ? session.cwd.split('/').filter(Boolean).pop() || '/' : '';
+
+      return `
+        <div class="session-card bg-gray-800 rounded-lg border border-gray-700 ${isSubAgent ? 'ml-4 border-l-2 border-purple-500/50' : ''} ${isExpanded ? '' : 'collapsed'}"
+             data-session-id="${session.id}" data-status="${session.status}">
+          <!-- Header - Always visible -->
+          <div class="p-3 cursor-pointer hover:bg-gray-750" onclick="toggleSession('${session.id}')">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2 min-w-0">
+                <svg class="w-4 h-4 text-gray-500 expand-icon flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+                <span class="${statusColor} text-sm">${getStatusIcon(session.status)}</span>
+                <span class="font-mono text-sm text-gray-400">${shortId}</span>
+                ${session.modelShort ? `<span class="px-1.5 py-0.5 text-xs rounded ${getModelColor(session.modelShort)}">${session.modelShort}</span>` : ''}
+                ${projectName ? `<span class="text-xs text-gray-500 truncate max-w-[150px]" title="${session.cwd}">${projectName}</span>` : ''}
+              </div>
+              <div class="flex items-center space-x-2 flex-shrink-0">
+                ${session.tokens?.total > 0 ? `<span class="text-xs text-gray-500">${formatTokens(session.tokens.total)}</span>` : ''}
+                <span class="text-xs text-gray-500 elapsed-time" data-start="${session.startTime}">${elapsed}</span>
+                <span class="px-2 py-0.5 text-xs rounded ${getStatusBgColor(session.status)} ${statusColor}">${session.status}</span>
+                <button onclick="event.stopPropagation(); openDetailModal('${session.id}')" class="p-1 hover:bg-gray-700 rounded" title="View Details">
+                  <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                  </svg>
+                </button>
+                <button onclick="event.stopPropagation(); copySessionId('${session.id}')" class="p-1 hover:bg-gray-700 rounded" title="Copy ID">
+                  <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            ${session.prompt ? `<div class="text-xs text-gray-400 mt-1 truncate">"${escapeHtml(session.prompt)}"</div>` : ''}
+          </div>
+
+          <!-- Details - Collapsible -->
+          <div class="session-details border-t border-gray-700 p-3 space-y-3">
+            ${session.currentTool ? renderCurrentTool(session.currentTool) : ''}
+            ${session.todos?.length > 0 ? renderTodos(session.todos) : ''}
+            ${session.messages?.length > 0 ? renderMessages(session.messages) : ''}
+            ${session.toolHistory?.length > 0 ? renderToolTimeline(session.toolHistory) : ''}
+            ${childAgents.length > 0 ? `
+              <div class="pt-2 border-t border-gray-700">
+                <div class="text-xs text-purple-400 font-medium mb-2">Sub-Agents (${childAgents.length})</div>
+                <div class="space-y-2">${childAgents.map(a => renderSessionCard(a, true)).join('')}</div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCurrentTool(tool) {
+      const elapsed = formatElapsed(Date.now() - tool.startTime);
+      const details = getToolDetails(tool);
+      return `
+        <div class="bg-blue-900/20 rounded p-2 border border-blue-500/30">
+          <div class="flex items-center space-x-2">
+            <svg class="w-4 h-4 text-blue-400 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            <span class="text-sm font-medium text-blue-400">${tool.name}</span>
+            <span class="text-xs text-gray-500 elapsed-time" data-start="${tool.startTime}">${elapsed}</span>
+          </div>
+          ${details ? `<div class="text-xs text-gray-400 font-mono mt-1 truncate">${escapeHtml(details)}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderTodos(todos) {
+      const done = todos.filter(t => t.status === 'completed').length;
+      return `
+        <div class="bg-gray-900/50 rounded p-2 border border-gray-700">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-gray-400">Tasks</span>
+            <span class="text-xs text-gray-500">${done}/${todos.length}</span>
+          </div>
+          <div class="space-y-1">
+            ${todos.slice(0, 4).map(t => {
+              const icon = t.status === 'completed' ? '&#10003;' : t.status === 'in_progress' ? '&#8635;' : '&#9675;';
+              const color = t.status === 'completed' ? 'text-green-500' : t.status === 'in_progress' ? 'text-blue-400' : 'text-gray-500';
+              return `<div class="flex items-start space-x-2 text-xs"><span class="${color}">${icon}</span><span class="text-gray-300">${escapeHtml(t.content)}</span></div>`;
+            }).join('')}
+            ${todos.length > 4 ? `<div class="text-xs text-gray-500">+${todos.length - 4} more</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMessages(messages) {
+      const recent = messages.slice(-3);
+      return `
+        <div class="bg-gray-900/50 rounded p-2 border border-gray-700">
+          <div class="text-xs text-gray-400 mb-1">Conversation (${messages.length})</div>
+          <div class="space-y-1 max-h-24 overflow-y-auto custom-scroll">
+            ${recent.map(m => `
+              <div class="text-xs"><span class="${m.role === 'user' ? 'text-blue-400' : 'text-green-400'}">${m.role === 'user' ? 'User' : 'Claude'}:</span> <span class="text-gray-300">${escapeHtml(truncateText(m.content, 100))}</span></div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderToolTimeline(history) {
+      return `
+        <div>
+          <div class="text-xs text-gray-400 mb-2">Recent Tools</div>
+          <div class="space-y-2">
+            ${history.slice(0, 5).map(t => {
+              const color = t.status === 'completed' ? 'completed' : t.status === 'failed' ? 'failed' : '';
+              const barColor = t.status === 'completed' ? 'bg-green-500' : t.status === 'failed' ? 'bg-red-500' : 'bg-gray-500';
+              const width = Math.min(100, Math.max(10, t.duration / 10));
+              return `
+                <div class="timeline-item ${color}">
+                  <div class="flex items-center justify-between text-xs">
+                    <span class="text-gray-300">${t.name}</span>
+                    <span class="text-gray-500">${t.duration}ms</span>
+                  </div>
+                  <div class="h-1 bg-gray-700 rounded mt-1">
+                    <div class="h-1 ${barColor} rounded" style="width: ${width}%"></div>
+                  </div>
+                  ${t.file || t.command ? `<div class="text-xs text-gray-500 truncate mt-0.5">${escapeHtml(t.file || t.command)}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Modal functions
+    function openDetailModal(sessionId) {
+      selectedSessionId = sessionId;
+      const session = sessions.get(sessionId);
+      if (!session) return;
+
+      const modal = document.getElementById('detail-modal');
+      const title = document.getElementById('modal-title');
+      const content = document.getElementById('modal-content');
+
+      title.textContent = `Session: ${sessionId.slice(0, 8)} ${session.modelShort ? `(${session.modelShort})` : ''}`;
+      content.innerHTML = renderDetailedSession(session);
+      modal.classList.remove('hidden');
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detail-modal').classList.add('hidden');
+      selectedSessionId = null;
+    }
+
+    function closeModal(event) {
+      if (event.target.id === 'detail-modal') closeDetailModal();
+    }
+
+    function renderDetailedSession(session) {
+      return `
+        <div class="space-y-4">
+          <!-- Overview -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-gray-900 rounded p-2">
+              <div class="text-xs text-gray-500">Status</div>
+              <div class="${getStatusColor(session.status)} font-medium">${session.status}</div>
+            </div>
+            <div class="bg-gray-900 rounded p-2">
+              <div class="text-xs text-gray-500">Duration</div>
+              <div class="text-gray-300">${formatElapsed(Date.now() - session.startTime)}</div>
+            </div>
+            <div class="bg-gray-900 rounded p-2">
+              <div class="text-xs text-gray-500">Tokens</div>
+              <div class="text-gray-300">${session.tokens?.total || 0} (${session.tokens?.input || 0} in / ${session.tokens?.output || 0} out)</div>
+            </div>
+            <div class="bg-gray-900 rounded p-2">
+              <div class="text-xs text-gray-500">Cost</div>
+              <div class="text-gray-300">$${(session.estimatedCost || 0).toFixed(4)}</div>
+            </div>
+          </div>
+
+          <!-- Prompt -->
+          ${session.prompt ? `
+            <div>
+              <div class="text-xs text-gray-500 mb-1">Prompt</div>
+              <div class="bg-gray-900 rounded p-3 text-sm text-gray-300">${escapeHtml(session.prompt)}</div>
+            </div>
+          ` : ''}
+
+          <!-- Full Conversation -->
+          ${session.messages?.length > 0 ? `
+            <div>
+              <div class="text-xs text-gray-500 mb-1">Full Conversation (${session.messages.length} messages)</div>
+              <div class="bg-gray-900 rounded p-3 max-h-60 overflow-y-auto custom-scroll space-y-2">
+                ${session.messages.map(m => `
+                  <div class="text-sm">
+                    <span class="font-medium ${m.role === 'user' ? 'text-blue-400' : 'text-green-400'}">${m.role === 'user' ? 'User' : 'Claude'}:</span>
+                    <span class="text-gray-300 whitespace-pre-wrap">${escapeHtml(m.content)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Tool History -->
+          ${session.toolHistory?.length > 0 ? `
+            <div>
+              <div class="text-xs text-gray-500 mb-1">Tool History (${session.toolHistory.length} calls)</div>
+              <div class="bg-gray-900 rounded p-3 max-h-60 overflow-y-auto custom-scroll">
+                <table class="w-full text-xs">
+                  <thead class="text-gray-500">
+                    <tr><th class="text-left py-1">Tool</th><th class="text-left">Details</th><th class="text-right">Duration</th><th class="text-right">Status</th></tr>
+                  </thead>
+                  <tbody class="text-gray-300">
+                    ${session.toolHistory.map(t => `
+                      <tr class="border-t border-gray-800">
+                        <td class="py-1 font-medium">${t.name}</td>
+                        <td class="truncate max-w-xs" title="${escapeHtml(getToolDetails(t) || '')}">${escapeHtml(getToolDetails(t) || '-')}</td>
+                        <td class="text-right">${t.duration}ms</td>
+                        <td class="text-right ${t.status === 'completed' ? 'text-green-400' : 'text-red-400'}">${t.status}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Raw Data -->
+          <div>
+            <div class="text-xs text-gray-500 mb-1">Session ID</div>
+            <div class="bg-gray-900 rounded p-2 font-mono text-xs text-gray-400 break-all">${session.id}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function exportSession() {
+      if (!selectedSessionId) return;
+      const session = sessions.get(selectedSessionId);
+      if (!session) return;
+
+      const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `claude-session-${selectedSessionId.slice(0, 8)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Session exported', 'success');
+    }
+
+    function copySessionId(id) {
+      navigator.clipboard.writeText(id).then(() => {
+        showToast('Session ID copied', 'success');
+      });
+    }
+
+    // Statistics
+    function updateStatistics() {
+      const all = Array.from(sessions.values());
+
+      // Tool stats
+      const toolCounts = {};
+      all.forEach(s => {
+        (s.toolHistory || []).forEach(t => {
+          toolCounts[t.name] = (toolCounts[t.name] || 0) + 1;
+        });
+      });
+      const toolStatsEl = document.getElementById('tool-stats');
+      const sortedTools = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      const maxCount = sortedTools[0]?.[1] || 1;
+      toolStatsEl.innerHTML = sortedTools.map(([name, count]) => `
+        <div class="flex items-center space-x-2">
+          <span class="text-xs text-gray-400 w-16 truncate">${name}</span>
+          <div class="flex-1 h-2 bg-gray-700 rounded">
+            <div class="h-2 bg-blue-500 rounded" style="width: ${(count / maxCount) * 100}%"></div>
+          </div>
+          <span class="text-xs text-gray-500 w-8 text-right">${count}</span>
+        </div>
+      `).join('') || '<div class="text-xs text-gray-500">No data</div>';
+
+      // Token breakdown
+      let totalInput = 0, totalOutput = 0, totalCache = 0;
+      all.forEach(s => {
+        totalInput += s.tokens?.input || 0;
+        totalOutput += s.tokens?.output || 0;
+        totalCache += s.tokens?.cacheRead || 0;
+      });
+      const tokenEl = document.getElementById('token-breakdown');
+      tokenEl.innerHTML = `
+        <div class="flex justify-between text-xs"><span class="text-gray-400">Input</span><span class="text-gray-300">${formatTokens(totalInput)}</span></div>
+        <div class="flex justify-between text-xs"><span class="text-gray-400">Output</span><span class="text-gray-300">${formatTokens(totalOutput)}</span></div>
+        <div class="flex justify-between text-xs"><span class="text-gray-400">Cache Read</span><span class="text-gray-300">${formatTokens(totalCache)}</span></div>
+      `;
+
+      // Model stats
+      const modelCounts = {};
+      all.forEach(s => {
+        if (s.modelShort) modelCounts[s.modelShort] = (modelCounts[s.modelShort] || 0) + 1;
+      });
+      const modelEl = document.getElementById('model-stats');
+      modelEl.innerHTML = Object.entries(modelCounts).map(([model, count]) => `
+        <div class="flex justify-between text-xs">
+          <span class="${getModelColor(model).replace('bg-', 'text-').split(' ')[0].replace('-900', '-400')}">${model}</span>
+          <span class="text-gray-300">${count} sessions</span>
+        </div>
+      `).join('') || '<div class="text-xs text-gray-500">No data</div>';
+    }
+
+    function updateStats() {
+      const all = Array.from(sessions.values());
+      const active = all.filter(s => s.status === 'active' && !s.isSubAgent).length;
+      const idle = all.filter(s => s.status === 'idle' && !s.isSubAgent).length;
+      const subAgents = all.filter(s => s.isSubAgent).length;
+      const totalTokens = all.reduce((sum, s) => sum + (s.tokens?.total || 0), 0);
+      const totalCost = all.reduce((sum, s) => sum + (s.estimatedCost || 0), 0);
+      const total = all.filter(s => !s.isSubAgent).length;
+
+      document.getElementById('stat-active').textContent = active;
+      document.getElementById('stat-idle').textContent = idle;
+      document.getElementById('stat-subagents').textContent = subAgents;
+      document.getElementById('stat-tokens').textContent = formatTokens(totalTokens);
+      document.getElementById('stat-cost').textContent = `$${totalCost.toFixed(2)}`;
+      document.getElementById('stat-total').textContent = total;
+    }
+
+    // Helpers
+    function getStatusColor(s) {
+      return { active: 'text-green-400', idle: 'text-yellow-400', completed: 'text-gray-400', error: 'text-red-400' }[s] || 'text-gray-400';
+    }
+    function getStatusBgColor(s) {
+      return { active: 'bg-green-900/50', idle: 'bg-yellow-900/50', completed: 'bg-gray-700/50', error: 'bg-red-900/50' }[s] || 'bg-gray-700/50';
+    }
+    function getStatusIcon(s) {
+      return { active: '&#9679;', idle: '&#9675;', completed: '&#10003;', error: '&#10007;' }[s] || '&#9675;';
+    }
+    function getModelColor(m) {
+      return { 'Opus 4.5': 'bg-purple-900 text-purple-300', 'Sonnet 4.5': 'bg-orange-900 text-orange-300', 'Haiku 4.5': 'bg-cyan-900 text-cyan-300' }[m] || 'bg-gray-700 text-gray-300';
+    }
+    function getToolDetails(t) {
+      return t.command || t.file || t.pattern || t.url || t.query || t.description || (t.agentType ? `${t.agentType}` : null);
+    }
+    function formatElapsed(ms) {
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ${s % 60}s`;
+      return `${Math.floor(m / 60)}h ${m % 60}m`;
+    }
+    function formatTokens(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return n.toString();
+    }
+    function truncateText(t, max) {
+      return t && t.length > max ? t.slice(0, max) + '...' : t || '';
+    }
+    function escapeHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function updateElapsedTimes() {
+      document.querySelectorAll('.elapsed-time').forEach(el => {
+        const start = parseInt(el.dataset.start);
+        if (start) el.textContent = formatElapsed(Date.now() - start);
+      });
+    }
+
+    // Initialize
+    setInterval(updateElapsedTimes, 1000);
+    connect();
+  </script>
+</body>
+</html>

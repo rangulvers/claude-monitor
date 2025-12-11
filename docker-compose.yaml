@@ -1,0 +1,23 @@
+services:
+  claude-monitor:
+    build: .
+    container_name: claude-monitor
+    restart: always
+    ports:
+      - "3002:3002"
+    volumes:
+      - ~/.claude:/home/node/.claude:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - SESSION_TIMEOUT_MS=300000
+      - IDLE_THRESHOLD_MS=30000
+      - MAX_TOOL_HISTORY=10
+      - CLEANUP_INTERVAL_MS=60000
+      - WS_HEARTBEAT_MS=30000
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
